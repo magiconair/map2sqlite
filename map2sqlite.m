@@ -99,7 +99,7 @@
 #define NSStringFromRect(r)			([NSString stringWithFormat:@"{x=%1.1f,y=%1.1f,w=%1.1f,h=%1.1f}", (r).origin.x, (r).origin.y, (r).size.width, (r).size.height])
 
 // version of this program
-#define kVersion @"1.0"
+#define kVersion @"2.0"
 
 // mandatory preference keys
 #define kMinZoomKey @"map.minZoom"
@@ -126,6 +126,49 @@
  * Helper functions
  */
 
+
+/*
+/// Converts a QuadKey into tile XY coordinates.
+/// </summary>
+/// <param name="quadKey">QuadKey of the tile.</param>
+/// <param name="tileX">Output parameter receiving the tile X coordinate.</param>
+/// <param name="tileY">Output parameter receiving the tile Y coordinate.</param>
+/// <param name="levelOfDetail">Output parameter receiving the level of detail.</param>
+ */
+void QuadKeyToTileXY(const char* quadKey, int* tileX, int* tileY, int* levelOfDetail)
+{
+	*levelOfDetail = strlen(quadKey);
+	*tileX = 0;
+	*tileY = 0;
+	
+	for(int i = *levelOfDetail; i > 0; i--)
+	{
+		int mask = 1 << (i - 1);
+		switch (quadKey[*levelOfDetail - i])
+		{
+			case '0':
+				break;
+				
+			case '1':
+				*tileX |= mask;
+				break;
+				
+			case '2':
+				*tileY |= mask;
+				break;
+				
+			case '3':
+				*tileX |= mask;
+				*tileY |= mask;
+				break;
+				
+			default:
+				NSLog(@"Invalid QuadKey digit sequence.");
+		}
+	}
+}
+
+
 /*
  * Calculates the top left coordinate of a tile.
  * (assumes OpenStreetmap tiles)
@@ -141,21 +184,26 @@ CGPoint pointForTile(int row, int col, int zoom) {
 /*
  * Prints usage information.
  */
-void printUsage() {
-	NSLog(@"Usage: map2sqlite -db <db file> [-mapdir <map directory>]");
+void printUsage()
+{
+	printf("  Reads OSM or VE format tiles into an SQLite database file.\n");
+	printf("  Usage: map2sqlite -db <db filename> [-mapdir <map directory>]\n");
 }
 
 /*
  * Converts a hexadecimal string into an integer value.
  */
-NSUInteger scanHexInt(NSString* s) {
-	NSUInteger value;
+NSInteger scanHexInt(NSString* s) {
+	unsigned int value;
 	
 	NSScanner* scanner = [NSScanner scannerWithString:s];
 	[scanner setCharactersToBeSkipped:[NSCharacterSet characterSetWithCharactersInString:@"LRC"]];
-	if ([scanner scanHexInt:&value]) {
-		return value;
-	} else {
+	if ([scanner scanHexInt:&value])
+	{
+		return (NSInteger)value;
+	}
+	else
+	{
 		NSLog(@"not a hex int %@", s);
 		return -1;
 	}
@@ -186,13 +234,24 @@ uint64_t RMTileKey(int tileZoom, int tileX, int tileY)
 /*
  * Creates an empty sqlite database
  */
-FMDatabase* createDB(NSString* dbFile) {
+FMDatabase* createDB(NSString* dbFile)
+{
 	// delete the old db file
-	[[NSFileManager defaultManager] removeFileAtPath:dbFile handler:nil];
+	if(dbFile == nil || (dbFile.length < 1))
+	{
+		return nil;
+	}
+	
+	BOOL isDir;
+	if([[NSFileManager defaultManager] fileExistsAtPath:dbFile isDirectory:&isDir] && !isDir)
+	{
+		[[NSFileManager defaultManager] removeItemAtPath:dbFile error:nil];
+	}
 	
 	FMDatabase* db = [FMDatabase databaseWithPath:dbFile];
 	NSLog(@"Creating %@", dbFile);
-	if (![db open]) {
+	if (![db open])
+	{
 		NSLog(@"Could not create %@.", dbFile);
 		return nil;
 	}
@@ -252,7 +311,8 @@ void createPrefs(FMDatabase* db) {
  * Creates the "tiles" table and imports a given directory structure
  * into the table.
  */
-void createMapDB(FMDatabase* db, NSString* mapDir) {
+void createMapDB(FMDatabase* db, NSString* mapDir)
+{
 	NSFileManager* fileManager = [NSFileManager defaultManager];
 	
 	// import the tiles
@@ -274,17 +334,34 @@ void createMapDB(FMDatabase* db, NSString* mapDir) {
 	int minZoom = INT_MAX;
 	int maxZoom = INT_MIN;
 	NSLog(@"Importing map tiles at %@", mapDir);
-	for (NSString* f in [fileManager subpathsAtPath:mapDir]) {
-		if ([[[f pathExtension] lowercaseString] isEqualToString:@"png"]) {
+	
+	NSArray* paths = [fileManager subpathsAtPath:mapDir];
+	
+	for (NSString* f in paths)
+	{
+		if ([[[f pathExtension] lowercaseString] isEqualToString:@"png"])
+		{
 			NSArray* comp = [f componentsSeparatedByString:@"/"];
-			NSUInteger zoom, row, col;
+			int zoom, row, col;
 			
 			// openstreetmap or ArcGis tiles?
-			if ([[comp objectAtIndex:0] characterAtIndex:0] == 'L') {				
+			if ([[comp objectAtIndex:0] characterAtIndex:0] == 'L')
+			{
 				zoom = [[[comp objectAtIndex:0] substringFromIndex:1] intValue];
 				row = scanHexInt([comp objectAtIndex:1]);
 				col = scanHexInt([[comp objectAtIndex:2] stringByDeletingPathExtension]);
-			} else {
+			}
+			else if(comp.count == 1) //
+			{
+				NSString* tileName = [comp objectAtIndex:0];
+				NSRange r = {0, tileName.length - 4};
+				tileName = [tileName substringWithRange:r];
+				const char* tile = [tileName UTF8String];
+				
+				QuadKeyToTileXY(tile, &row, &col, &zoom);
+			}
+			else
+			{
 				zoom = [[comp objectAtIndex:0] intValue];
 				col = [[comp objectAtIndex:1] intValue];
 				row = [[[comp objectAtIndex:2] stringByDeletingPathExtension] intValue];
@@ -295,7 +372,8 @@ void createMapDB(FMDatabase* db, NSString* mapDir) {
 			maxZoom = fmax(maxZoom, zoom);
 			
 			NSData* image = [[NSData alloc] initWithContentsOfFile:[NSString stringWithFormat:@"%@/%@", mapDir, f]];
-			if (image) {
+			if (image)
+			{
 				executeUpdate(db, @"insert into tiles (tilekey, zoom, row, col, image) values (?, ?, ?, ?, ?)", 
 							  [NSNumber numberWithLongLong:RMTileKey(zoom, col, row)],
 							  [NSNumber numberWithInt:zoom], 
@@ -303,7 +381,9 @@ void createMapDB(FMDatabase* db, NSString* mapDir) {
 							  [NSNumber numberWithInt:col], 
 							  image);
 				[image release];
-			} else {
+			}
+			else
+			{
 				NSLog(@"Could not read %@", f);
 			}
 		}
@@ -342,8 +422,6 @@ void createMapDB(FMDatabase* db, NSString* mapDir) {
  * Displays some statistics about the tiles in the imported database.
  */
 void showMapDBStats(FMDatabase* db, NSString* dbFile, NSString* mapDir) {
-	NSFileManager* fileManager = [NSFileManager defaultManager];
-	
 	// print some map statistics
 	// print some map statistics
 	FMResultSet* rs = executeQuery(db, @"select count(*) count, min(zoom) min_zoom, max(zoom) max_zoom from tiles");
@@ -351,7 +429,10 @@ void showMapDBStats(FMDatabase* db, NSString* dbFile, NSString* mapDir) {
 		int count = [rs intForColumn:@"count"];
 		int minZoom = [rs intForColumn:@"min_zoom"];
 		int maxZoom = [rs intForColumn:@"max_zoom"];
-		unsigned long long fileSize = [[[fileManager fileAttributesAtPath:dbFile traverseLink:YES] objectForKey:NSFileSize] unsignedLongLongValue];
+		
+		NSError *error;
+		NSDictionary *fileAttributes = [[NSFileManager defaultManager] attributesOfItemAtPath:dbFile error:&error];
+		unsigned long long fileSize = [[fileAttributes objectForKey:NSFileSize] unsignedLongLongValue];
 		
 		NSLog(@"\n");
 		NSLog(@"Map statistics");
@@ -389,49 +470,106 @@ void showMapDBStats(FMDatabase* db, NSString* dbFile, NSString* mapDir) {
 	[rs close];
 }
 
+
 /*
  * main method
  */
-int main (int argc, const char * argv[]) {
+int main (int argc, const char * argv[])
+{
 	NSAutoreleasePool * pool = [[NSAutoreleasePool alloc] init];
 	NSFileManager* fileManager = [NSFileManager defaultManager];
+	char buffer[128];
 
 	// print the version
-    NSLog(@"map2sqlite %@\n", kVersion);
-    
+    printf("map2sqlite %s\n", [kVersion UTF8String]);
+	printUsage();
+	
 	// get the command line args
 	NSUserDefaults *args = [NSUserDefaults standardUserDefaults];
 	
 	// command line args
 	NSString* dbFile = [args stringForKey:@"db"];
 	NSString* mapDir = [args stringForKey:@"mapdir"];
-
-	// check command line args
-	if (dbFile == nil) {
-		printUsage();
-		[pool release];
-		return 1;
-	}
 	
+	NSString* currentDir = [fileManager currentDirectoryPath];
+	printf("> %s\n", [currentDir UTF8String]);
+
 	// check that the map directory exists
-	if (mapDir != nil) {
-		BOOL isDir;
-		if (![fileManager fileExistsAtPath:mapDir isDirectory:&isDir] && isDir) {
-			NSLog(@"Map directory does not exist: %@", mapDir);
+	BOOL isDir;
+	
+	if(mapDir == nil)
+	{
+		size_t length;
+		printf("Enter map directory > ");
+		if (fgets(buffer, sizeof(buffer), stdin) == NULL)
+		{
 			[pool release];
 			return 1;
 		}
+		
+		length = strlen(buffer);
+		if (buffer[length - 1] == '\n') // remove the traling '\n' add by fgets
+			buffer[length - 1] = '\0';
+		mapDir = [NSString stringWithCString:buffer encoding:NSASCIIStringEncoding];
 	}
 	
-	// delete the old db
-	[fileManager removeFileAtPath:dbFile handler:nil];
+	if(![fileManager fileExistsAtPath:mapDir isDirectory:&isDir] || !isDir)
+	{
+		NSLog(@"Map directory does not exist: %@", mapDir);
+		[pool release];
+		return 3;
+	}
+
+	// check command line args
+	if(dbFile == nil)
+	{
+		size_t length;
+		printf("Enter DB file name > ");
+		if (fgets(buffer, sizeof(buffer), stdin) == NULL)
+			return -1; // error or end of file sent to the terminal
+		length = strlen(buffer);
+		if (buffer[length - 1] == '\n') // remove the traling '\n' add by fgets
+			buffer[length - 1] = '\0';
+		
+		dbFile = [NSString stringWithCString:buffer encoding:NSASCIIStringEncoding];
+	}
+	
+	if((dbFile == nil) || (dbFile.length < 1))
+	{
+		dbFile = [mapDir lastPathComponent];
+	}
+	
+	NSString* ext = [dbFile pathExtension];
+	
+	if((ext == nil) || (ext.length < 1))
+	{
+		dbFile = [dbFile stringByAppendingString:@".db"];
+	}
+
+	// delete any old db
+	if([fileManager fileExistsAtPath:dbFile isDirectory:&isDir])
+	{
+		if(isDir)
+		{
+			NSLog(@"Error db file name is a directory: %@", dbFile);
+			[pool release];
+			return 4;
+		}
+		else
+		{
+			NSURL *fileURL = [NSURL fileURLWithPath:dbFile];
+			[fileManager removeItemAtURL:fileURL error:nil];
+		}
+	}
 	
 	// create the db
 	FMDatabase* db = createDB(dbFile);
-	if (db == nil) {
-		NSLog(@"Error creating database %@", dbFile);
+	
+	if(db == nil)
+	{
+		NSLog(@"Error creating database: %@", dbFile);
 		[pool release];
-		return 1;
+		return 3;
 	}
 	
 	// cache the statements as we're using them a lot
@@ -441,7 +579,8 @@ int main (int argc, const char * argv[]) {
 	createPrefs(db);
 	
 	// import the map
-	if (mapDir != nil) {
+	if (mapDir != nil)
+	{
 		createMapDB(db, mapDir);
 		showMapDBStats(db, dbFile, mapDir);
 	}

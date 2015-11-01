@@ -702,8 +702,9 @@
     }
 }
 
-- (NSString*) description {
-    return [NSString stringWithFormat:@"%@ %d hit(s) for query %@", [super description], useCount, query];
+- (NSString*) description
+{
+    return [NSString stringWithFormat:@"%@ %ld hit(s) for query %@", [super description], useCount, query];
 }
 
 
