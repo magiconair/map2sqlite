@@ -58,17 +58,17 @@ return ret;
 //this technique is being implemented as described by Matt Gallagher at
 //http://cocoawithlove.com/2009/05/variable-argument-lists-in-cocoa.html
 
-- (id)executeQuery:(NSString *)sql withArgumentsInArray:(NSArray *)arguments {
-
+- (id)executeQuery:(NSString *)sql withArgumentsInArray:(NSArray *)arguments
+{
 	id returnObject;
 	
 	//also need make sure that everything in arguments is an Obj-C object
 	//or else argList will be the wrong size
 	NSUInteger argumentsCount = [arguments count];
-	char *argList = (char *)malloc(sizeof(id *) * argumentsCount);
+	va_list* argList = malloc(sizeof(id *) * argumentsCount);
 	[arguments getObjects:(id *)argList];
 	
-	returnObject = [self executeQuery:sql arguments:argList];
+	returnObject = [self executeQuery:sql arguments:*argList];
 	
 	free(argList);
 	
@@ -82,10 +82,10 @@ return ret;
 	//also need make sure that everything in arguments is an Obj-C object
 	//or else argList will be the wrong size
 	NSUInteger argumentsCount = [arguments count];
-	char *argList = (char *)malloc(sizeof(id *) * argumentsCount);
+	va_list* argList = malloc(sizeof(id *) * argumentsCount);
 	[arguments getObjects:(id *)argList];
 	
-	returnBool = [self executeUpdate:sql arguments:argList];
+	returnBool = [self executeUpdate:sql arguments:*argList];
 	
 	free(argList);
 	
